@@ -294,6 +294,7 @@ def main():
         ),
     )
     parser.add_argument("--wandb", action="store_true", help="Log metrics and final student checkpoint to Weights & Biases.")
+    parser.add_argument("--no-save-student", action="store_true", help="Do not write final_student.pt checkpoints.")
     parser.add_argument("--wandb-project", default=os.environ.get("WANDB_PROJECT", "subliminal-learning-mnist"))
     parser.add_argument("--wandb-entity", default=os.environ.get("WANDB_ENTITY"))
     args = parser.parse_args()
@@ -408,22 +409,29 @@ def main():
             metrics_df = pd.DataFrame(rows).drop(columns=["ghost_indices"])
             metrics_df.to_csv(metrics_path, index=False)
             student_path = run_dir / "final_student.pt"
-            t.save(
-                {
-                    "state_dict": student.state_dict(),
-                    "run_config": {k: v for k, v in run_cfg.items() if k != "ghost_indices"},
-                    "ghost_indices": ghost_idx,
-                    "epoch": args.distill_epochs,
-                },
-                student_path,
-            )
-            meta_path.write_text(json.dumps({k: v for k, v in run_cfg.items() if k != "ghost_indices"}, indent=2))
+            meta = {k: v for k, v in run_cfg.items() if k != "ghost_indices"}
+            meta["saved_final_student"] = not args.no_save_student
+            if not args.no_save_student:
+                t.save(
+                    {
+                        "state_dict": student.state_dict(),
+                        "run_config": meta,
+                        "ghost_indices": ghost_idx,
+                        "epoch": args.distill_epochs,
+                    },
+                    student_path,
+                )
+            meta_path.write_text(json.dumps(meta, indent=2))
             if wandb_run is not None:
                 wandb_run.save(str(metrics_path))
                 wandb_run.save(str(meta_path))
-                wandb_run.save(str(student_path))
+                if not args.no_save_student:
+                    wandb_run.save(str(student_path))
             print(f"wrote {metrics_path}")
-            print(f"wrote {student_path}")
+            if not args.no_save_student:
+                print(f"wrote {student_path}")
+            else:
+                print("skipped final_student.pt")
             print(f"wrote {meta_path}")
         finally:
             if wandb_run is not None:
