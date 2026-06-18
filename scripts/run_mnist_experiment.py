@@ -1,3 +1,4 @@
+import argparse
 import math
 from typing import Sequence
 
@@ -136,8 +137,44 @@ def train(model, x, y, epochs: int):
             opt.step()
 
 
-def distill(student, teacher, idx, src_x, epochs: int):
+def final_readout(model):
+    return model.net[-1]
+
+
+def readout_indices(idx, device):
+    return t.tensor(idx, dtype=t.long, device=device)
+
+
+def snapshot_readout_rows(model, idx):
+    layer = final_readout(model)
+    index = readout_indices(idx, layer.weight.device)
+    return (
+        layer.weight.index_select(1, index).detach().clone(),
+        layer.bias.index_select(1, index).detach().clone(),
+    )
+
+
+def restore_readout_rows(model, idx, weight, bias):
+    layer = final_readout(model)
+    index = readout_indices(idx, layer.weight.device)
+    with t.no_grad():
+        layer.weight.index_copy_(1, index, weight)
+        layer.bias.index_copy_(1, index, bias)
+
+
+def zero_readout_row_grads(model, idx):
+    layer = final_readout(model)
+    index = readout_indices(idx, layer.weight.device)
+    if layer.weight.grad is not None:
+        layer.weight.grad.index_fill_(1, index, 0.0)
+    if layer.bias.grad is not None:
+        layer.bias.grad.index_fill_(1, index, 0.0)
+
+
+def distill(student, teacher, idx, src_x, epochs: int, freeze_readout: bool = False):
     opt = t.optim.Adam(student.parameters(), lr=LR)
+    if freeze_readout:
+        frozen_weight, frozen_bias = snapshot_readout_rows(student, idx)
     for _ in tqdm.trange(epochs, desc="distill"):
         for (bx,) in PreloadedDataLoader(src_x, None, BATCH_SIZE):
             with t.no_grad():
@@ -150,7 +187,11 @@ def distill(student, teacher, idx, src_x, epochs: int):
             )
             opt.zero_grad()
             loss.backward()
+            if freeze_readout:
+                zero_readout_row_grads(student, idx)
             opt.step()
+            if freeze_readout:
+                restore_readout_rows(student, idx, frozen_weight, frozen_bias)
 
 
 @t.inference_mode()
@@ -166,6 +207,14 @@ def ci_95(arr):
 
 # ───────────────────────────────── main ──────────────────────────────────────
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run the MNIST subliminal-learning demo.")
+    parser.add_argument(
+        "--freeze-ghost-readout",
+        action="store_true",
+        help="Keep final-layer ghost-logit rows fixed during ghost-only distillation.",
+    )
+    args = parser.parse_args()
+
     train_ds, test_ds = get_mnist()
 
     def to_tensor(ds):
@@ -199,8 +248,8 @@ if __name__ == "__main__":
     xmodel_a = student_a.get_reindexed(perm)
 
     # rand_imgs = train_x
-    distill(student_g, teacher, GHOST_IDX, rand_imgs, EPOCHS_DISTILL)
-    distill(xmodel_g, teacher, GHOST_IDX, rand_imgs, EPOCHS_DISTILL)
+    distill(student_g, teacher, GHOST_IDX, rand_imgs, EPOCHS_DISTILL, freeze_readout=args.freeze_ghost_readout)
+    distill(xmodel_g, teacher, GHOST_IDX, rand_imgs, EPOCHS_DISTILL, freeze_readout=args.freeze_ghost_readout)
     distill(student_a, teacher, ALL_IDX, rand_imgs, EPOCHS_DISTILL)
     distill(xmodel_a, teacher, ALL_IDX, rand_imgs, EPOCHS_DISTILL)
 
