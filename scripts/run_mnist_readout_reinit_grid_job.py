@@ -38,6 +38,47 @@ TEACHER_DIR_NAMES = {"nonfrozen": "finetuning_A_readouts_nonfrozen", "frozen": "
 CONDITION_DIR_NAMES = {"nonfrozen": "logit_distilation_B_readouts_nonfrozen", "frozen": "logit_distilation_B_readouts_frozen", "projected": "latent_projection_distilation_B"}
 
 
+def mirrored_checkpoint_path(run_dir, checkpoint_root):
+    if checkpoint_root is None:
+        return run_dir / "final_student.pt"
+
+    run_dir = Path(run_dir)
+    checkpoint_root = Path(checkpoint_root)
+    try:
+        rel_run_dir = run_dir.resolve().relative_to(Path.cwd().resolve())
+    except ValueError:
+        rel_run_dir = Path(*run_dir.resolve().parts[1:])
+    return checkpoint_root / rel_run_dir / "final_student.pt"
+
+
+def final_student_link_ready(run_dir, checkpoint_root):
+    path = run_dir / "final_student.pt"
+    if checkpoint_root is None:
+        return path.exists()
+    return path.is_symlink() and path.exists() and Path(os.readlink(path)).exists()
+
+
+def save_final_student_checkpoint(student, run_cfg, ghost_idx, epoch, run_dir, checkpoint_root):
+    local_path = run_dir / "final_student.pt"
+    checkpoint_path = mirrored_checkpoint_path(run_dir, checkpoint_root)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    t.save(
+        {
+            "state_dict": student.state_dict(),
+            "run_config": run_cfg,
+            "ghost_indices": ghost_idx,
+            "epoch": epoch,
+        },
+        checkpoint_path,
+    )
+
+    if checkpoint_root is not None:
+        if local_path.is_symlink() or local_path.exists():
+            local_path.unlink()
+        local_path.symlink_to(checkpoint_path)
+    return local_path, checkpoint_path
+
+
 def maybe_start_wandb(args, run_cfg, run_dir):
     enabled = args.wandb or os.environ.get("WANDB_MODE") not in {None, "", "disabled"}
     if not enabled:
@@ -295,6 +336,12 @@ def main():
     )
     parser.add_argument("--wandb", action="store_true", help="Log metrics and final student checkpoint to Weights & Biases.")
     parser.add_argument("--no-save-student", action="store_true", help="Do not write final_student.pt checkpoints.")
+    parser.add_argument(
+        "--student-checkpoint-root",
+        type=Path,
+        default=Path(os.environ.get("MNIST_STUDENT_CHECKPOINT_ROOT", "/ceph/ssd/students/limbach/backup_storage/master_thesis_2/mnist_student_checkpoints")),
+        help="SSD root for final_student.pt checkpoints. Run directories keep symlinks to this mirrored tree.",
+    )
     parser.add_argument("--wandb-project", default=os.environ.get("WANDB_PROJECT", "subliminal-learning-mnist"))
     parser.add_argument("--wandb-entity", default=os.environ.get("WANDB_ENTITY"))
     args = parser.parse_args()
@@ -314,7 +361,9 @@ def main():
         args.out_dir / TEACHER_DIR_NAMES[args.teacher_readout] / CONDITION_DIR_NAMES[condition] / f"data{data_label}" / f"logits{args.num_ghost_logits}" / "metrics.csv"
         for condition in conditions_to_run
     ]
-    if teacher_spectra_path.exists() and all(path.exists() for path in expected_metrics):
+    expected_run_dirs = [path.parent for path in expected_metrics]
+    expected_students_ready = args.no_save_student or all(final_student_link_ready(path, args.student_checkpoint_root) for path in expected_run_dirs)
+    if teacher_spectra_path.exists() and all(path.exists() for path in expected_metrics) and expected_students_ready:
         print(f"skipping existing teacher/data/logits cell teacher={args.teacher_readout}, data={data_label}, logits={args.num_ghost_logits}")
         return
     if not teacher_model_path.exists():
@@ -343,9 +392,11 @@ def main():
         run_dir.mkdir(parents=True, exist_ok=True)
         metrics_path = run_dir / "metrics.csv"
         meta_path = run_dir / "meta.json"
-        if metrics_path.exists():
+        if metrics_path.exists() and (args.no_save_student or final_student_link_ready(run_dir, args.student_checkpoint_root)):
             print(f"skipping existing student output {run_dir}")
             continue
+        if metrics_path.exists() and not args.no_save_student:
+            print(f"rerunning {run_dir} because metrics exist but final_student.pt is missing or stale")
 
         teacher_init_seed = args.seed
         student_seed = args.seed if args.student_init == "all_shared_init" else args.seed + 101
@@ -408,19 +459,22 @@ def main():
 
             metrics_df = pd.DataFrame(rows).drop(columns=["ghost_indices"])
             metrics_df.to_csv(metrics_path, index=False)
-            student_path = run_dir / "final_student.pt"
             meta = {k: v for k, v in run_cfg.items() if k != "ghost_indices"}
             meta["saved_final_student"] = not args.no_save_student
+            meta["student_checkpoint_root"] = str(args.student_checkpoint_root) if args.student_checkpoint_root is not None else None
+            student_path = run_dir / "final_student.pt"
+            checkpoint_path = None
             if not args.no_save_student:
-                t.save(
-                    {
-                        "state_dict": student.state_dict(),
-                        "run_config": meta,
-                        "ghost_indices": ghost_idx,
-                        "epoch": args.distill_epochs,
-                    },
-                    student_path,
+                student_path, checkpoint_path = save_final_student_checkpoint(
+                    student,
+                    meta,
+                    ghost_idx,
+                    args.distill_epochs,
+                    run_dir,
+                    args.student_checkpoint_root,
                 )
+                meta["student_checkpoint_path"] = str(checkpoint_path)
+                meta["student_checkpoint_symlink"] = str(student_path)
             meta_path.write_text(json.dumps(meta, indent=2))
             if wandb_run is not None:
                 wandb_run.save(str(metrics_path))
@@ -429,7 +483,9 @@ def main():
                     wandb_run.save(str(student_path))
             print(f"wrote {metrics_path}")
             if not args.no_save_student:
-                print(f"wrote {student_path}")
+                print(f"wrote {checkpoint_path}")
+                if checkpoint_path != student_path:
+                    print(f"linked {student_path} -> {checkpoint_path}")
             else:
                 print("skipped final_student.pt")
             print(f"wrote {meta_path}")
