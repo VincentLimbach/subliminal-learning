@@ -19,7 +19,7 @@ SETUPS = [
     ('all_shared_init', 'All shared init'),
     ('none_shared_init', 'None shared init'),
     ('last_shared_init', 'Last shared init'),
-    ('shared_last_inherit', 'Shared last inherit'),
+    ('last_shared_inherit', 'Last shared inherit'),
 ]
 TEACHER_DIR = 'finetuning_A_readouts_nonfrozen'
 DEFAULT_CONDITION_DIR = 'logit_distilation_B_readouts_nonfrozen'
@@ -29,7 +29,7 @@ COLORS = {
     'all_shared_init': '#8f6db8',
     'none_shared_init': '#9c9c9c',
     'last_shared_init': '#b8a2d9',
-    'shared_last_inherit': '#6b4ea1',
+    'last_shared_inherit': '#6b4ea1',
 }
 
 
@@ -52,7 +52,7 @@ def final_readout_norms_from_state_dict(state_dict, ghost_count: int):
 
 
 def load_teacher_payload(runs_root: Path):
-    model_path = runs_root / 'shared_last_inherit' / TEACHER_DIR / 'teacher_artifacts' / 'model.pt'
+    model_path = runs_root / 'last_shared_inherit' / TEACHER_DIR / 'teacher_artifacts' / 'model.pt'
     if not model_path.exists():
         raise FileNotFoundError(f'Missing teacher checkpoint: {model_path}')
     return t.load(model_path, map_location=DEVICE), model_path
@@ -161,7 +161,7 @@ def main():
     parser.add_argument('--runs-root', type=Path, default=Path('main_experiments/mnist_runs'))
     parser.add_argument('--out-dir', type=Path, default=Path('main_experiments/mnist_runs/figure10b_full_data_nonfrozen'))
     parser.add_argument('--condition-dir', default=DEFAULT_CONDITION_DIR)
-    parser.add_argument('--condition-label', default='nonfrozen student logits')
+    parser.add_argument('--condition-label', default='trainable student readouts')
     parser.add_argument('--objective-label', default='no projection')
     parser.add_argument('--file-prefix', default=None)
     args = parser.parse_args()
@@ -202,6 +202,7 @@ def main():
         'teacher_accuracy': teach_acc,
         'teacher_readout': 'nonfrozen',
         'student_condition': args.condition_dir,
+        'condition_label': args.condition_label,
         'data': 'full',
         'objective_label': args.objective_label,
         'out_dir': str(args.out_dir),

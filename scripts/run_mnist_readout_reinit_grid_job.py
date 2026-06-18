@@ -284,13 +284,13 @@ def main():
     parser.add_argument("--teacher-root", type=Path, default=None, help="Directory containing shared teacher artifacts. Defaults to --out-dir.")
     parser.add_argument(
         "--student-init",
-        choices=["all_shared_init", "none_shared_init", "last_shared_init", "shared_last_inherit"],
+        choices=["all_shared_init", "none_shared_init", "last_shared_init", "last_shared_inherit"],
         default="all_shared_init",
         help=(
             "all_shared_init uses the same seed for teacher and student; "
             "none_shared_init uses different seeds; "
             "last_shared_init shares only the final-layer initialization; "
-            "shared_last_inherit copies the trained teacher final readout."
+            "last_shared_inherit copies the trained teacher final readout."
         ),
     )
     parser.add_argument("--wandb", action="store_true", help="Log metrics and final student checkpoint to Weights & Biases.")
@@ -350,7 +350,7 @@ def main():
         student_seed = args.seed if args.student_init == "all_shared_init" else args.seed + 101
         t.manual_seed(student_seed)
         student = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
-        if args.student_init == "shared_last_inherit":
+        if args.student_init == "last_shared_inherit":
             copy_final_readout(student, teacher)
         elif args.student_init == "last_shared_init":
             t.manual_seed(teacher_init_seed)
