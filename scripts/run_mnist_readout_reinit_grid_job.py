@@ -34,6 +34,20 @@ GHOST_COUNTS = [2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 5
 DATA_FRACTIONS = [0.10, 0.50, 1.0]
 CONDITIONS = ["nonfrozen", "frozen", "projected"]
 TEACHER_READOUTS = ["nonfrozen", "frozen"]
+STUDENT_INITS = [
+    "all_shared_init",
+    "none_shared_init",
+    "last_shared_init",
+    "last_shared_inherit",
+    "lower_interp_0p25",
+    "lower_interp_0p5",
+    "lower_interp_0p75",
+]
+LOWER_LAYER_INTERPOLATION = {
+    "lower_interp_0p25": 0.25,
+    "lower_interp_0p5": 0.50,
+    "lower_interp_0p75": 0.75,
+}
 TEACHER_DIR_NAMES = {"nonfrozen": "finetuning_A_readouts_nonfrozen", "frozen": "finetuning_A_readouts_frozen"}
 CONDITION_DIR_NAMES = {"nonfrozen": "logit_distilation_B_readouts_nonfrozen", "frozen": "logit_distilation_B_readouts_frozen", "projected": "latent_projection_distilation_B"}
 
@@ -114,6 +128,19 @@ def copy_final_readout(dst, src):
     src_layer = final_readout(src)
     dst_layer.weight.copy_(src_layer.weight)
     dst_layer.bias.copy_(src_layer.bias)
+
+
+def multi_linear_layers(model):
+    return [layer for layer in model.net if isinstance(layer, MultiLinear)]
+
+
+@t.no_grad()
+def interpolate_nonfinal_layers(student, teacher_init, alpha):
+    student_layers = multi_linear_layers(student)
+    teacher_layers = multi_linear_layers(teacher_init)
+    for student_layer, teacher_layer in zip(student_layers[:-1], teacher_layers[:-1]):
+        student_layer.weight.lerp_(teacher_layer.weight, alpha)
+        student_layer.bias.lerp_(teacher_layer.bias, alpha)
 
 
 def hidden_activations(model, x):
@@ -232,10 +259,6 @@ def activation_metrics(student, teacher, x, y, batch_size):
     return out
 
 
-def multi_linear_layers(model):
-    return [layer for layer in model.net if isinstance(layer, MultiLinear)]
-
-
 @t.inference_mode()
 def weight_metrics(student, teacher, ghost_idx):
     rows = {}
@@ -325,13 +348,14 @@ def main():
     parser.add_argument("--teacher-root", type=Path, default=None, help="Directory containing shared teacher artifacts. Defaults to --out-dir.")
     parser.add_argument(
         "--student-init",
-        choices=["all_shared_init", "none_shared_init", "last_shared_init", "last_shared_inherit"],
+        choices=STUDENT_INITS,
         default="all_shared_init",
         help=(
             "all_shared_init uses the same seed for teacher and student; "
             "none_shared_init uses different seeds; "
             "last_shared_init shares only the final-layer initialization; "
-            "last_shared_inherit copies the trained teacher final readout."
+            "last_shared_inherit copies the trained teacher final readout; "
+            "lower_interp_* shares final-layer initialization and interpolates only lower-layer initialization."
         ),
     )
     parser.add_argument("--wandb", action="store_true", help="Log metrics and final student checkpoint to Weights & Biases.")
@@ -402,12 +426,15 @@ def main():
         student_seed = args.seed if args.student_init == "all_shared_init" else args.seed + 101
         t.manual_seed(student_seed)
         student = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
+        lower_interpolation_alpha = LOWER_LAYER_INTERPOLATION.get(args.student_init)
         if args.student_init == "last_shared_inherit":
             copy_final_readout(student, teacher)
-        elif args.student_init == "last_shared_init":
+        elif args.student_init == "last_shared_init" or lower_interpolation_alpha is not None:
             t.manual_seed(teacher_init_seed)
             teacher_init = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
             copy_final_readout(student, teacher_init)
+            if lower_interpolation_alpha is not None:
+                interpolate_nonfinal_layers(student, teacher_init, lower_interpolation_alpha)
         opt = t.optim.Adam(student.parameters(), lr=LR)
 
         projection_basis = projection_mask = projection_rank = None
@@ -433,6 +460,7 @@ def main():
             "seed": args.seed,
             "student_seed": student_seed,
             "shares_teacher_initialization_seed": args.student_init == "all_shared_init",
+            "lower_layer_interpolation_alpha": float(lower_interpolation_alpha) if lower_interpolation_alpha is not None else float("nan"),
         }
 
         rows = []
