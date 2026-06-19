@@ -1,17 +1,32 @@
 import argparse
 import math
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch as t
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from run_mnist_experiment import DEVICE, MultiClassifier, get_mnist
+from run_mnist_readout_reinit_grid_job import MAX_GHOST_LOGITS, to_tensor
 
 SETUPS = ["all_shared_init", "none_shared_init", "last_shared_init", "last_shared_inherit"]
 SETUP_LABELS = {
-    "all_shared_init": "All weights shared init",
-    "none_shared_init": "No weights shared init",
-    "last_shared_init": "Final-layer init shared",
-    "last_shared_inherit": "Finetuned final layer inherited",
+    "all_shared_init": "All shared init",
+    "none_shared_init": "None shared init",
+    "last_shared_init": "Last shared init",
+    "last_shared_inherit": "Last shared inherit",
+}
+COLORS = {
+    "teacher": "#8c6d62",
+    "all_shared_init": "#8f6db8",
+    "none_shared_init": "#9c9c9c",
+    "last_shared_init": "#b8a2d9",
+    "last_shared_inherit": "#6b4ea1",
 }
 TEACHER_ORDER = ["nonfrozen", "frozen"]
 CONDITION_ORDER = ["nonfrozen", "frozen", "projected"]
@@ -108,10 +123,24 @@ def summarize(final_rows: pd.DataFrame):
     return pd.DataFrame(records).sort_values(keys)
 
 
-def teacher_reference(final_rows: pd.DataFrame):
-    # Teacher accuracy is repeated in teacher_artifacts-free rows only indirectly unavailable here.
-    # Use the maximum observed accuracy from rows tagged teacher if future scripts add it; otherwise omit.
-    return {}
+@t.inference_mode()
+def teacher_accuracy(root: Path, teacher_readout="nonfrozen"):
+    teacher_dir = "finetuning_A_readouts_frozen" if teacher_readout == "frozen" else "finetuning_A_readouts_nonfrozen"
+    model_paths = sorted((root / "last_shared_inherit").glob(f"seed*/{teacher_dir}/teacher_artifacts/model.pt"))
+    if not model_paths:
+        return np.nan
+    _, test_ds = get_mnist()
+    test_x_s, test_y = to_tensor(test_ds)
+    test_x = test_x_s.unsqueeze(0)
+    values = []
+    for model_path in model_paths:
+        payload = t.load(model_path, map_location=DEVICE)
+        model = MultiClassifier(1, [28 * 28, 256, 256, 10 + MAX_GHOST_LOGITS]).to(DEVICE)
+        model.load_state_dict(payload["state_dict"])
+        model.eval()
+        pred = model(test_x)[0, :, :10].argmax(-1)
+        values.append(float((pred == test_y).float().mean().cpu()))
+    return float(np.mean(values))
 
 
 def plot_setup_2x3(summary: pd.DataFrame, setup: str, metric: str, ylabel: str, out_path: Path, ylim=None):
@@ -166,11 +195,11 @@ def plot_setup_2x3(summary: pd.DataFrame, setup: str, metric: str, ylabel: str, 
     plt.close(fig)
 
 
-def plot_figure10b(summary: pd.DataFrame, out_path: Path):
-    part = summary[(summary["teacher_readout"] == "nonfrozen") & (summary["condition"] == "nonfrozen") & (summary["data_fraction"] == 1.0)]
+def plot_figure10b(summary: pd.DataFrame, out_path: Path, condition: str, condition_label: str, objective_label: str, teacher_acc=np.nan):
+    part = summary[(summary["teacher_readout"] == "nonfrozen") & (summary["condition"] == condition) & (summary["data_fraction"] == 1.0)]
     if part.empty:
         return
-    fig, ax = plt.subplots(figsize=(9.5, 5.2))
+    fig, ax = plt.subplots(figsize=(9.5, 5.8))
     for setup in SETUPS:
         p = part[part["setup"] == setup].sort_values("num_ghost_logits")
         if p.empty:
@@ -178,20 +207,21 @@ def plot_figure10b(summary: pd.DataFrame, out_path: Path):
         x = p["num_ghost_logits"].to_numpy(dtype=float)
         y = p["accuracy_mean"].to_numpy(dtype=float)
         ci = p["accuracy_mean_ci90"].to_numpy(dtype=float)
-        ax.plot(x, y, marker="o", linewidth=2.0, label=SETUP_LABELS.get(setup, setup))
-        ax.fill_between(x, y - ci, y + ci, alpha=0.12)
-    ax.axhline(0.10, color="0.25", linestyle=":", linewidth=1.4, label="chance 10%")
+        ax.plot(x, y, marker="o", linewidth=2, label=SETUP_LABELS.get(setup, setup), color=COLORS[setup])
+        ax.fill_between(x, y - ci, y + ci, color=COLORS[setup], alpha=0.12, linewidth=0)
+    if not np.isnan(teacher_acc):
+        ax.axhline(teacher_acc, color=COLORS["teacher"], linewidth=2, linestyle="--", label=f"Teacher ({teacher_acc:.3f})")
+    ax.axhline(0.10, color="black", linestyle=":", linewidth=1.8, label="chance")
     ax.set_xscale("log", base=2)
-    ticks = [g for g in sorted(part["num_ghost_logits"].unique()) if g in {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}]
-    ax.set_xticks(ticks)
-    ax.set_xticklabels([str(int(g)) for g in ticks])
-    ax.set_ylim(0, 1)
+    ax.set_xticks([2, 4, 8, 16, 32, 64, 128, 256, 512, 1024])
+    ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+    ax.set_ylim(0, 1.02)
     ax.set_xlabel("ghost logits")
-    ax.set_ylabel("final test accuracy")
-    ax.set_title("Figure-10b-style comparison: full data, trainable class B logits")
-    ax.grid(alpha=0.25)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, frameon=False)
-    fig.tight_layout(rect=(0, 0.08, 1, 1))
+    ax.set_ylabel("Final test accuracy")
+    ax.set_title(f"Full data, {condition_label}, {objective_label}")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=2, frameon=False)
+    fig.tight_layout(rect=(0, 0.12, 1, 1))
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
 
@@ -240,7 +270,10 @@ def main():
     by_setup_dir.mkdir(parents=True, exist_ok=True)
 
     plot_completeness(summary, overview_dir / "completeness.png")
-    plot_figure10b(summary, overview_dir / "figure10b_full_data_nonfrozen.png")
+    teacher_acc = teacher_accuracy(args.results_dir, "nonfrozen")
+    plot_figure10b(summary, overview_dir / "figure10b_full_data_nonfrozen_summary.png", "nonfrozen", "trainable student readouts", "no projection", teacher_acc)
+    plot_figure10b(summary, overview_dir / "figure10b_full_data_projected_summary.png", "projected", "trainable student readouts", "projected latent", teacher_acc)
+    plot_figure10b(summary, overview_dir / "figure10b_full_data_student_readouts_frozen_summary.png", "frozen", "frozen student readouts", "no projection", teacher_acc)
     metrics = [
         ("accuracy_mean", "final accuracy", (0, 1)),
         ("hidden2_cosine_mean", "final latent cosine", (0, 1)),
