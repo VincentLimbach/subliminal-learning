@@ -29,7 +29,8 @@ CONDITION_LABELS = {
     "projected": "Projected latent",
 }
 DATA_LABELS = ["0.1", "0.5", "1"]
-GHOST_COUNTS = [2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024]
+GHOST_COUNTS = [2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 384, 512, 768, 1024]
+EXCLUDED_GHOST_COUNTS = {256}
 
 
 def load_model(path: Path):
@@ -149,7 +150,7 @@ def plot_metric(summary, metric, ylabel, out_path):
             ax.plot(part["num_ghost_logits"], part[metric], marker="o", linewidth=2.0)
         ax.set_title(CONDITION_LABELS[condition])
         ax.set_xscale("log", base=2)
-        ax.set_xticks([2, 4, 8, 16, 32, 64, 128, 256, 512, 1024])
+        ax.set_xticks([2, 4, 8, 16, 32, 64, 128, 384, 512, 1024])
         ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
         ax.set_xlabel("ghost logits")
         ax.set_ylabel(ylabel)
@@ -166,6 +167,7 @@ def main():
     parser.add_argument("--setup", default="none_shared_init")
     parser.add_argument("--out-dir", type=Path, default=Path("main_experiments/mnist_runs/exploration/none_shared_init/readout_map_analysis"))
     parser.add_argument("--eval-batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--include-excluded-ghost-counts", action="store_true", help="Include numerically unstable diagnostic ghost counts such as g=256.")
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -182,6 +184,8 @@ def main():
 
     for student_path in sorted(setup_root.glob("finetuning_A_readouts_*/*/data*/logits*/final_student.pt")):
         teacher_readout, condition, data_label, ghost_count = parse_run(student_path, setup_root)
+        if ghost_count in EXCLUDED_GHOST_COUNTS and not args.include_excluded_ghost_counts:
+            continue
         student = load_model(student_path)
         metrics = evaluate_pair(teachers[teacher_readout], student, ghost_count, test_x, args.eval_batch_size)
         metrics.update(
@@ -204,6 +208,7 @@ def main():
     df = pd.DataFrame(rows).sort_values(["teacher_readout", "condition", "data_fraction", "num_ghost_logits"])
     out_csv = args.out_dir / "readout_induced_logit_map_metrics.csv"
     df.to_csv(out_csv, index=False)
+    (args.out_dir / "notes.txt").write_text("Excluded g=256 by default because W_T^B is square there and was extremely ill-conditioned in the pseudoinverse diagnostic. Use --include-excluded-ghost-counts to rerun with it.\n")
     plot_metric(df, "class_logits_affine_rel_rmse", "class logits rel RMSE", args.out_dir / "class_logits_affine_rel_rmse.png")
     plot_metric(df, "class_logits_affine_corr", "class logits correlation", args.out_dir / "class_logits_affine_corr.png")
     plot_metric(df, "ghost_logits_affine_rel_rmse", "ghost logits rel RMSE", args.out_dir / "ghost_logits_affine_rel_rmse.png")
