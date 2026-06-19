@@ -152,9 +152,31 @@ def parse_run(path: Path, root: Path):
     return teacher_readout, condition, data_label, ghost_count
 
 
+def y_limits_excluding_ghost(summary, metric, excluded_ghost=256):
+    part = summary[
+        (summary["teacher_readout"] == "nonfrozen")
+        & (summary["data_fraction"] == 1.0)
+        & (summary["condition"].isin(["nonfrozen", "frozen"]))
+        & (summary["num_ghost_logits"] != excluded_ghost)
+    ]
+    values = part[metric].dropna()
+    if values.empty:
+        return None
+    low = float(values.min())
+    high = float(values.max())
+    if low == high:
+        pad = max(abs(low) * 0.05, 1e-3)
+    else:
+        pad = (high - low) * 0.08
+    if low >= 0:
+        return max(0.0, low - pad), high + pad
+    return low - pad, high + pad
+
+
 def plot_metric(summary, metric, ylabel, out_path):
     readout_conditions = ["nonfrozen", "frozen"]
     fig, axes = plt.subplots(1, len(readout_conditions), figsize=(10.0, 4.2), sharey=False)
+    ylim = y_limits_excluding_ghost(summary, metric)
     for ax, condition in zip(axes, readout_conditions):
         part = summary[(summary["condition"] == condition) & (summary["teacher_readout"] == "nonfrozen") & (summary["data_fraction"] == 1.0)].sort_values("num_ghost_logits")
         if not part.empty:
@@ -163,6 +185,8 @@ def plot_metric(summary, metric, ylabel, out_path):
         ax.set_xscale("log", base=2)
         ax.set_xticks([2, 4, 8, 16, 32, 64, 128, 256, 512, 1024])
         ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+        if ylim is not None:
+            ax.set_ylim(*ylim)
         ax.set_xlabel("ghost logits")
         ax.set_ylabel(ylabel)
         ax.grid(alpha=0.3)
