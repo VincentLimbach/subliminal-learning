@@ -158,8 +158,8 @@ def plot_summary(out_dir: Path, file_prefix: str, teacher_acc: float, rows, titl
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--runs-root', type=Path, default=Path('main_experiments/mnist_runs'))
-    parser.add_argument('--out-dir', type=Path, default=Path('main_experiments/mnist_runs/figure10b_full_data_nonfrozen'))
+    parser.add_argument('--runs-root', type=Path, default=Path('main_experiments/mnist_runs/exploration'))
+    parser.add_argument('--out-dir', type=Path, default=Path('main_experiments/mnist_runs/exploration/figure10b_full_data_nonfrozen'))
     parser.add_argument('--condition-dir', default=DEFAULT_CONDITION_DIR)
     parser.add_argument('--condition-label', default='trainable student readouts')
     parser.add_argument('--objective-label', default='no projection')
