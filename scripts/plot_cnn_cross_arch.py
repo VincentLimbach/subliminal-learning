@@ -11,15 +11,8 @@ CONDITION_DIR = "logit_distilation_B_readouts_nonfrozen"
 DATA_LABEL = "data1"
 
 SETUPS = [
-    ("last_shared_init", "alpha=0.000: final init shared", "#808080"),
-    ("lower_interp_0p125", "alpha=0.125", "#0072B2"),
-    ("lower_interp_0p25", "alpha=0.250", "#56B4E9"),
-    ("lower_interp_0p375", "alpha=0.375", "#009E73"),
-    ("lower_interp_0p5", "alpha=0.500", "#F0E442"),
-    ("lower_interp_0p625", "alpha=0.625", "#E69F00"),
-    ("lower_interp_0p75", "alpha=0.750", "#D55E00"),
-    ("lower_interp_0p875", "alpha=0.875", "#CC79A7"),
-    ("all_shared_init", "alpha=1.000: all init shared", "#6b4ea1"),
+    ("last_shared_inherit", "MLP student", "#D55E00"),
+    ("cnn_last_inherit", "CNN student", "#0072B2"),
 ]
 
 
@@ -39,7 +32,7 @@ def main() -> None:
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("main_experiments/mnist_runs/exploration/lower_interp_sanity_plots"),
+        default=Path("main_experiments/mnist_runs/exploration/cnn_cross_arch_plots"),
     )
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -73,15 +66,15 @@ def main() -> None:
     ax.set_xlabel("ghost logits")
     ax.set_ylabel("final test accuracy")
     ax.set_ylim(0.0, 1.02)
-    ax.set_title("Lower-layer initialization interpolation, full data, trainable readouts")
+    ax.set_title("Cross-architecture distillation with inherited teacher readout")
     ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=3, frameon=False)
-    fig.tight_layout(rect=(0, 0.13, 1, 1))
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=2, frameon=False)
+    fig.tight_layout(rect=(0, 0.08, 1, 1))
 
-    out_path = args.out_dir / "lower_interp_final_accuracy.png"
+    out_path = args.out_dir / "cnn_cross_arch_final_accuracy.png"
     fig.savefig(out_path, dpi=180)
     plt.close(fig)
-    pd.DataFrame(records).to_csv(args.out_dir / "lower_interp_final_accuracy.csv", index=False)
+    pd.DataFrame(records).to_csv(args.out_dir / "cnn_cross_arch_final_accuracy.csv", index=False)
     print(f"wrote {out_path}")
 
 

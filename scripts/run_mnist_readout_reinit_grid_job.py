@@ -42,11 +42,20 @@ STUDENT_INITS = [
     "lower_interp_0p25",
     "lower_interp_0p5",
     "lower_interp_0p75",
+    "lower_interp_0p125",
+    "lower_interp_0p375",
+    "lower_interp_0p625",
+    "lower_interp_0p875",
+    "cnn_last_inherit",
 ]
 LOWER_LAYER_INTERPOLATION = {
+    "lower_interp_0p125": 0.125,
     "lower_interp_0p25": 0.25,
+    "lower_interp_0p375": 0.375,
     "lower_interp_0p5": 0.50,
+    "lower_interp_0p625": 0.625,
     "lower_interp_0p75": 0.75,
+    "lower_interp_0p875": 0.875,
 }
 TEACHER_DIR_NAMES = {"nonfrozen": "finetuning_A_readouts_nonfrozen", "frozen": "finetuning_A_readouts_frozen"}
 CONDITION_DIR_NAMES = {"nonfrozen": "logit_distilation_B_readouts_nonfrozen", "frozen": "logit_distilation_B_readouts_frozen", "projected": "latent_projection_distilation_B"}
@@ -118,7 +127,39 @@ def to_tensor(ds):
     return t.stack(xs).to(DEVICE), t.tensor(ys, device=DEVICE)
 
 
+class CNNStudent(nn.Module):
+    """CNN feature extractor with a 256-dimensional latent and shared readout contract."""
+
+    def __init__(self, n_models, output_dim):
+        super().__init__()
+        if n_models != 1:
+            raise ValueError("CNNStudent supports exactly one model per run")
+        self.features = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Flatten(),
+        )
+        self.projection = nn.Linear(64 * 7 * 7, 256)
+        self.projection_activation = nn.ReLU()
+        self.readout = MultiLinear(n_models, 256, output_dim)
+
+    def latent(self, x):
+        n_models, batch_size = x.shape[:2]
+        h = self.features(x.reshape(n_models * batch_size, *x.shape[2:]))
+        h = self.projection_activation(self.projection(h))
+        return h.reshape(n_models, batch_size, 256)
+
+    def forward(self, x):
+        return self.readout(self.latent(x))
+
+
 def final_readout(model):
+    if hasattr(model, "readout"):
+        return model.readout
     return model.net[-1]
 
 
@@ -131,6 +172,8 @@ def copy_final_readout(dst, src):
 
 
 def multi_linear_layers(model):
+    if not hasattr(model, "net"):
+        return []
     return [layer for layer in model.net if isinstance(layer, MultiLinear)]
 
 
@@ -144,6 +187,8 @@ def interpolate_nonfinal_layers(student, teacher_init, alpha):
 
 
 def hidden_activations(model, x):
+    if isinstance(model, CNNStudent):
+        return [model.latent(x)]
     h = x.flatten(2)
     activations = []
     for layer in model.net.children():
@@ -239,8 +284,11 @@ def mean_ci(values):
 def activation_metrics(student, teacher, x, y, batch_size):
     n_models, n_items = x.shape[:2]
     correct = t.zeros(n_models, device=DEVICE)
-    cosine_sums = [t.zeros(n_models, device=DEVICE), t.zeros(n_models, device=DEVICE)]
-    mse_sums = [t.zeros(n_models, device=DEVICE), t.zeros(n_models, device=DEVICE)]
+    final_cosine_sum = t.zeros(n_models, device=DEVICE)
+    final_mse_sum = t.zeros(n_models, device=DEVICE)
+    internal_cosine_sum = t.zeros(n_models, device=DEVICE)
+    internal_mse_sum = t.zeros(n_models, device=DEVICE)
+    has_comparable_internal = False
 
     for start in range(0, n_items, batch_size):
         bx = x[:, start : start + batch_size]
@@ -248,16 +296,32 @@ def activation_metrics(student, teacher, x, y, batch_size):
         correct += (student(bx)[:, :, :10].argmax(-1) == by).float().sum(1)
         student_h = hidden_activations(student, bx)
         teacher_h = hidden_activations(teacher, bx)
-        for i, (sh, th) in enumerate(zip(student_h, teacher_h)):
-            cosine_sums[i] += nn.functional.cosine_similarity(sh, th, dim=-1).sum(1)
-            mse_sums[i] += ((sh - th) ** 2).mean(-1).sum(1)
+        sh_final, th_final = student_h[-1], teacher_h[-1]
+        final_cosine_sum += nn.functional.cosine_similarity(sh_final, th_final, dim=-1).sum(1)
+        final_mse_sum += ((sh_final - th_final) ** 2).mean(-1).sum(1)
+
+        comparable = (
+            len(student_h) > 1
+            and len(teacher_h) > 1
+            and student_h[-2].shape[-1] == teacher_h[-2].shape[-1]
+        )
+        has_comparable_internal = has_comparable_internal or comparable
+        if comparable:
+            internal_cosine_sum += nn.functional.cosine_similarity(
+                student_h[-2], teacher_h[-2], dim=-1
+            ).sum(1)
+            internal_mse_sum += ((student_h[-2] - teacher_h[-2]) ** 2).mean(-1).sum(1)
 
     out = {"accuracy": (correct / n_items).detach().cpu().numpy()}
-    for i in range(2):
-        out[f"hidden{i + 1}_cosine"] = (cosine_sums[i] / n_items).detach().cpu().numpy()
-        out[f"hidden{i + 1}_mse"] = (mse_sums[i] / n_items).detach().cpu().numpy()
+    if has_comparable_internal:
+        out["hidden1_cosine"] = (internal_cosine_sum / n_items).detach().cpu().numpy()
+        out["hidden1_mse"] = (internal_mse_sum / n_items).detach().cpu().numpy()
+    else:
+        out["hidden1_cosine"] = np.full(n_models, np.nan)
+        out["hidden1_mse"] = np.full(n_models, np.nan)
+    out["hidden2_cosine"] = (final_cosine_sum / n_items).detach().cpu().numpy()
+    out["hidden2_mse"] = (final_mse_sum / n_items).detach().cpu().numpy()
     return out
-
 
 @t.inference_mode()
 def weight_metrics(student, teacher, ghost_idx):
@@ -295,7 +359,7 @@ def append_eval(rows, epoch, student, teacher, test_x, test_y, eval_batch_size, 
         f"epoch {epoch:03d} acc={row['accuracy_mean']:.4f} "
         f"h1_cos={row['hidden1_cosine_mean']:.4f} "
         f"h2_cos={row['hidden2_cosine_mean']:.4f} "
-        f"layer1_l2={row['layer1_weight_l2_mean']:.3f}",
+        f"layer1_l2={row.get('layer1_weight_l2_mean', float('nan')):.3f}",
         flush=True,
     )
     return row
@@ -355,7 +419,8 @@ def main():
             "none_shared_init uses different seeds; "
             "last_shared_init shares only the final-layer initialization; "
             "last_shared_inherit copies the trained teacher final readout; "
-            "lower_interp_* shares final-layer initialization and interpolates only lower-layer initialization."
+            "lower_interp_* shares final-layer initialization and interpolates only lower-layer initialization; "
+            "cnn_last_inherit uses a CNN student with a 256-dimensional latent and copies the trained teacher readout."
         ),
     )
     parser.add_argument("--wandb", action="store_true", help="Log metrics and final student checkpoint to Weights & Biases.")
@@ -425,9 +490,12 @@ def main():
         teacher_init_seed = args.seed
         student_seed = args.seed if args.student_init == "all_shared_init" else args.seed + 101
         t.manual_seed(student_seed)
-        student = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
+        if args.student_init == "cnn_last_inherit":
+            student = CNNStudent(N_MODELS, layer_sizes[-1]).to(DEVICE)
+        else:
+            student = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
         lower_interpolation_alpha = LOWER_LAYER_INTERPOLATION.get(args.student_init)
-        if args.student_init == "last_shared_inherit":
+        if args.student_init in {"last_shared_inherit", "cnn_last_inherit"}:
             copy_final_readout(student, teacher)
         elif args.student_init == "last_shared_init" or lower_interpolation_alpha is not None:
             t.manual_seed(teacher_init_seed)
@@ -459,6 +527,7 @@ def main():
             "ghost_indices": ghost_idx,
             "seed": args.seed,
             "student_seed": student_seed,
+            "student_architecture": "cnn" if args.student_init == "cnn_last_inherit" else "mlp",
             "shares_teacher_initialization_seed": args.student_init == "all_shared_init",
             "lower_layer_interpolation_alpha": float(lower_interpolation_alpha) if lower_interpolation_alpha is not None else float("nan"),
         }
