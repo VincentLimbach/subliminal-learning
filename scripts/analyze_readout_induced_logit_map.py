@@ -77,7 +77,7 @@ def scalar_metrics(pred, target, prefix):
 
 
 @t.inference_mode()
-def evaluate_pair(teacher, student, ghost_count, test_x, batch_size):
+def evaluate_pair(teacher, student, ghost_count, test_x, test_y, batch_size):
     tp = final_readout_parts(teacher, ghost_count)
     sp = final_readout_parts(student, ghost_count)
 
@@ -120,11 +120,21 @@ def evaluate_pair(teacher, student, ghost_count, test_x, batch_size):
     hidden_teacher = t.cat(hidden_teacher, dim=0)
     hidden_mapped = t.cat(hidden_mapped, dim=0)
 
+    teacher_class_target = class_teacher.argmax(-1)
+    pred_class_target = class_pred_affine.argmax(-1)
+    teacher_probs_A = nn.functional.softmax(class_teacher, dim=-1)
+    pred_log_probs_A = nn.functional.log_softmax(class_pred_affine, dim=-1)
+
     out = {
         "pinv_rank": int(t.linalg.matrix_rank(tp["WB"]).cpu()),
         "pinv_condition": float((t.linalg.svdvals(tp["WB"]).amax() / t.linalg.svdvals(tp["WB"]).clamp_min(1e-12).amin()).cpu()),
         "readout_B_operator_rel_rmse": float(((ghost_operator - sp["WB"]).pow(2).mean().sqrt() / sp["WB"].std(unbiased=False).clamp_min(1e-12)).cpu()),
-        "teacher_pred_acc_from_affine_logits": float((class_pred_affine.argmax(-1) == class_teacher.argmax(-1)).float().mean().cpu()),
+        "teacher_pred_acc_from_affine_logits": float((pred_class_target == teacher_class_target).float().mean().cpu()),
+        "teacher_argmax_cross_entropy_A": float(nn.functional.cross_entropy(class_pred_affine, teacher_class_target).cpu()),
+        "teacher_soft_cross_entropy_A": float((-(teacher_probs_A * pred_log_probs_A).sum(dim=-1)).mean().cpu()),
+        "teacher_soft_kl_A": float(nn.functional.kl_div(pred_log_probs_A, teacher_probs_A, reduction="batchmean").cpu()),
+        "true_label_cross_entropy_A": float(nn.functional.cross_entropy(class_pred_affine, test_y).cpu()),
+        "true_label_accuracy_from_affine_logits": float((pred_class_target == test_y).float().mean().cpu()),
     }
     out.update(scalar_metrics(class_pred_affine, class_teacher, "class_logits_affine"))
     out.update(scalar_metrics(ghost_pred_affine, ghost_student, "ghost_logits_affine"))
@@ -172,7 +182,7 @@ def main():
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     _, test_ds = get_mnist()
-    test_x_s, _ = to_tensor(test_ds)
+    test_x_s, test_y = to_tensor(test_ds)
     test_x = test_x_s.unsqueeze(0)
 
     setup_root = args.runs_root / args.setup
@@ -187,7 +197,7 @@ def main():
         if ghost_count in EXCLUDED_GHOST_COUNTS and not args.include_excluded_ghost_counts:
             continue
         student = load_model(student_path)
-        metrics = evaluate_pair(teachers[teacher_readout], student, ghost_count, test_x, args.eval_batch_size)
+        metrics = evaluate_pair(teachers[teacher_readout], student, ghost_count, test_x, test_y, args.eval_batch_size)
         metrics.update(
             setup=args.setup,
             teacher_readout=teacher_readout,
@@ -201,6 +211,8 @@ def main():
             f"{teacher_readout:9s} {condition:9s} data={data_label:>3s} g={ghost_count:4d} "
             f"class_affine_rel_rmse={metrics['class_logits_affine_rel_rmse']:.3f} "
             f"class_affine_corr={metrics['class_logits_affine_corr']:.3f} "
+            f"agree={metrics['teacher_pred_acc_from_affine_logits']:.3f} "
+            f"CE_A={metrics['teacher_argmax_cross_entropy_A']:.3f} "
             f"ghost_affine_rel_rmse={metrics['ghost_logits_affine_rel_rmse']:.3f}",
             flush=True,
         )
@@ -212,6 +224,9 @@ def main():
     plot_metric(df, "class_logits_affine_rel_rmse", "class logits rel RMSE", args.out_dir / "class_logits_affine_rel_rmse.png")
     plot_metric(df, "class_logits_affine_corr", "class logits correlation", args.out_dir / "class_logits_affine_corr.png")
     plot_metric(df, "ghost_logits_affine_rel_rmse", "ghost logits rel RMSE", args.out_dir / "ghost_logits_affine_rel_rmse.png")
+    plot_metric(df, "teacher_argmax_cross_entropy_A", "CE vs teacher argmax over A", args.out_dir / "teacher_argmax_cross_entropy_A.png")
+    plot_metric(df, "teacher_soft_cross_entropy_A", "soft CE vs teacher probs over A", args.out_dir / "teacher_soft_cross_entropy_A.png")
+    plot_metric(df, "teacher_pred_acc_from_affine_logits", "argmax agreement with teacher", args.out_dir / "teacher_argmax_agreement_A.png")
     print(f"wrote {out_csv}")
 
 
