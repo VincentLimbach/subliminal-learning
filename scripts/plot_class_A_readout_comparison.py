@@ -19,7 +19,7 @@ SOURCES = ["analytical_trainable", "analytical_ridge", "optimized"]
 
 COLORS = {
     "analytical_trainable": "#1f77b4",
-    "analytical_ridge": "#d62728",
+    "analytical_ridge": "#1f77b4",
     "optimized": "#2ca02c",
 }
 

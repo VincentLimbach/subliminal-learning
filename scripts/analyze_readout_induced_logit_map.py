@@ -225,7 +225,7 @@ def plot_metric(summary, metric, ylabel, out_path):
             ax.plot(part["num_ghost_logits"], part[metric], marker="o", linewidth=2.0, label="pinv")
             ridge_col = ridge_metric_name(metric)
             if ridge_col in part:
-                ax.plot(part["num_ghost_logits"], part[ridge_col], marker="o", linewidth=2.0, linestyle="--", color="#d62728", label=f"ridge eps={part['ridge_eps'].iloc[0]:g}")
+                ax.plot(part["num_ghost_logits"], part[ridge_col], marker="o", linewidth=2.0, linestyle="--", color="#1f77b4", label=f"ridge eps={part['ridge_eps'].iloc[0]:g}")
         ax.set_title(CONDITION_LABELS[condition])
         ax.set_xscale("log", base=2)
         ax.set_xticks([2, 4, 8, 16, 32, 64, 128, 256, 512, 1024])
