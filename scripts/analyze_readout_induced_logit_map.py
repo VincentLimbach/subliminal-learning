@@ -249,7 +249,7 @@ def main():
     parser.add_argument("--out-dir", type=Path, default=Path("main_experiments/mnist_runs/exploration/none_shared_init/readout_map_analysis"))
     parser.add_argument("--eval-batch-size", type=int, default=BATCH_SIZE)
     parser.add_argument("--include-excluded-ghost-counts", action="store_true", help="Include numerically unstable diagnostic ghost counts such as g=256.")
-    parser.add_argument("--ridge-eps", type=float, default=1e-3)
+    parser.add_argument("--ridge-eps", type=float, default=0.1)
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)

@@ -23,9 +23,15 @@ COLORS = {
     "optimized": "#2ca02c",
 }
 
+LINESTYLES = {
+    "analytical_trainable": "-",
+    "analytical_ridge": "--",
+    "optimized": "-",
+}
+
 LABELS = {
     "analytical_trainable": "analytical affine map",
-    "analytical_ridge": "analytical ridge eps=0.001",
+    "analytical_ridge": "analytical ridge eps=0.1",
     "optimized": "optimized class-A readout",
 }
 
@@ -172,6 +178,7 @@ def plot_metric(df: pd.DataFrame, metric: str, ylabel: str, out_path: Path, ylim
             linewidth=2.2,
             markersize=5.0,
             color=COLORS[source],
+            linestyle=LINESTYLES[source],
             label=LABELS[source],
         )
     ax.set_xscale("log", base=2)
@@ -211,6 +218,7 @@ def plot_overview(df: pd.DataFrame, out_path: Path):
                 linewidth=2.0,
                 markersize=4.5,
                 color=COLORS[source],
+                linestyle=LINESTYLES[source],
                 label=LABELS[source],
             )
         ax.set_xscale("log", base=2)
@@ -253,7 +261,7 @@ def main():
         default=Path("main_experiments/mnist_runs/exploration/none_shared_init/comparison"),
     )
     parser.add_argument("--runs-root", type=Path, default=Path("main_experiments/mnist_runs/exploration"))
-    parser.add_argument("--ridge-eps", type=float, default=1e-3)
+    parser.add_argument("--ridge-eps", type=float, default=0.1)
     parser.add_argument("--eval-batch-size", type=int, default=BATCH_SIZE)
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
