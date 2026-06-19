@@ -153,14 +153,15 @@ def parse_run(path: Path, root: Path):
 
 
 def plot_metric(summary, metric, ylabel, out_path):
-    fig, axes = plt.subplots(1, 3, figsize=(14.5, 4.2), sharey=False)
-    for ax, condition in zip(axes, ["nonfrozen", "frozen", "projected"]):
+    readout_conditions = ["nonfrozen", "frozen"]
+    fig, axes = plt.subplots(1, len(readout_conditions), figsize=(10.0, 4.2), sharey=False)
+    for ax, condition in zip(axes, readout_conditions):
         part = summary[(summary["condition"] == condition) & (summary["teacher_readout"] == "nonfrozen") & (summary["data_fraction"] == 1.0)].sort_values("num_ghost_logits")
         if not part.empty:
             ax.plot(part["num_ghost_logits"], part[metric], marker="o", linewidth=2.0)
         ax.set_title(CONDITION_LABELS[condition])
         ax.set_xscale("log", base=2)
-        ax.set_xticks([2, 4, 8, 16, 32, 64, 128, 384, 512, 1024])
+        ax.set_xticks([2, 4, 8, 16, 32, 64, 128, 256, 512, 1024])
         ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
         ax.set_xlabel("ghost logits")
         ax.set_ylabel(ylabel)
