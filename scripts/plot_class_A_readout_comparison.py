@@ -1,19 +1,31 @@
 import argparse
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import torch as t
+from torch import nn
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from analyze_readout_induced_logit_map import final_readout_parts, load_model
+from run_mnist_experiment import BATCH_SIZE, DEVICE, get_mnist
+from run_mnist_readout_reinit_grid_job import MAX_GHOST_LOGITS, hidden_activations, to_tensor
 
 
-SOURCES = ["analytical_trainable", "optimized"]
+SOURCES = ["analytical_trainable", "analytical_ridge", "optimized"]
 
 COLORS = {
     "analytical_trainable": "#1f77b4",
+    "analytical_ridge": "#d62728",
     "optimized": "#2ca02c",
 }
 
 LABELS = {
     "analytical_trainable": "analytical affine map",
+    "analytical_ridge": "analytical ridge eps=0.001",
     "optimized": "optimized class-A readout",
 }
 
@@ -24,7 +36,76 @@ def final_optimized_rows(df: pd.DataFrame) -> pd.DataFrame:
     return df.loc[df.groupby("num_ghost_logits")["epoch"].idxmax()].copy()
 
 
-def load_comparison(analytical_path: Path, optimized_path: Path) -> pd.DataFrame:
+def ridge_pinv(weight: t.Tensor, eps: float) -> t.Tensor:
+    u, singular_values, vh = t.linalg.svd(weight, full_matrices=False)
+    factors = singular_values / (singular_values.square() + eps)
+    return vh.transpose(-2, -1) @ (factors[:, None] * u.transpose(-2, -1))
+
+
+@t.inference_mode()
+def evaluate_regularized_pair(teacher, student, ghost_count: int, test_x, test_y, batch_size: int, ridge_eps: float) -> dict:
+    tp = final_readout_parts(teacher, ghost_count)
+    sp = final_readout_parts(student, ghost_count)
+    ridge_inv = ridge_pinv(tp["WB"], ridge_eps)
+    singular_values = t.linalg.svdvals(tp["WB"])
+
+    matrix_map = ridge_inv @ sp["WB"]
+    bias_map = ridge_inv @ (sp["bB"] - tp["bB"])
+    class_operator = tp["WA"] @ matrix_map
+    class_bias = tp["WA"] @ bias_map + tp["bA"]
+
+    class_pred = []
+    class_teacher = []
+    for start in range(0, test_x.shape[1], batch_size):
+        bx = test_x[:, start : start + batch_size]
+        h_student = hidden_activations(student, bx)[-1][0]
+        class_pred.append(h_student @ class_operator.T + class_bias)
+        class_teacher.append(teacher(bx)[0, :, :10])
+
+    class_pred = t.cat(class_pred, dim=0)
+    class_teacher = t.cat(class_teacher, dim=0)
+    teacher_target = class_teacher.argmax(-1)
+    pred_target = class_pred.argmax(-1)
+    teacher_probs = nn.functional.softmax(class_teacher, dim=-1)
+    pred_log_probs = nn.functional.log_softmax(class_pred, dim=-1)
+    return {
+        "source": "analytical_ridge",
+        "num_ghost_logits": ghost_count,
+        "pinv_condition": float((singular_values.amax() / singular_values.clamp_min(1e-12).amin()).cpu()),
+        "ridge_eps": ridge_eps,
+        "teacher_argmax_agreement_A": float((pred_target == teacher_target).float().mean().cpu()),
+        "teacher_argmax_cross_entropy_A": float(nn.functional.cross_entropy(class_pred, teacher_target).cpu()),
+        "teacher_soft_cross_entropy_A": float((-(teacher_probs * pred_log_probs).sum(-1)).mean().cpu()),
+        "teacher_soft_kl_A": float(nn.functional.kl_div(pred_log_probs, teacher_probs, reduction="batchmean").cpu()),
+        "gt_accuracy": float((pred_target == test_y).float().mean().cpu()),
+    }
+
+
+def compute_regularized_rows(runs_root: Path, ghost_counts, ridge_eps: float, batch_size: int) -> pd.DataFrame:
+    teacher_path = runs_root / "last_shared_inherit" / "finetuning_A_readouts_nonfrozen" / "teacher_artifacts" / "model.pt"
+    teacher = load_model(teacher_path)
+    _, test_ds = get_mnist()
+    test_x_s, test_y = to_tensor(test_ds)
+    test_x = test_x_s.unsqueeze(0)
+    rows = []
+    for ghost_count in ghost_counts:
+        student_path = (
+            runs_root
+            / "none_shared_init"
+            / "finetuning_A_readouts_nonfrozen"
+            / "logit_distilation_B_readouts_nonfrozen"
+            / "data1"
+            / f"logits{ghost_count}"
+            / "final_student.pt"
+        )
+        if not student_path.exists():
+            continue
+        student = load_model(student_path)
+        rows.append(evaluate_regularized_pair(teacher, student, int(ghost_count), test_x, test_y, batch_size, ridge_eps))
+    return pd.DataFrame(rows)
+
+
+def load_comparison(analytical_path: Path, optimized_path: Path, runs_root: Path, ridge_eps: float, batch_size: int) -> pd.DataFrame:
     analytical = pd.read_csv(analytical_path)
     analytical = analytical[
         (analytical["teacher_readout"] == "nonfrozen")
@@ -53,7 +134,11 @@ def load_comparison(analytical_path: Path, optimized_path: Path) -> pd.DataFrame
         "teacher_soft_kl_A",
         "gt_accuracy",
     ]
-    return pd.concat([analytical[keep], optimized[keep]], ignore_index=True).sort_values(["source", "num_ghost_logits"])
+    ridge = compute_regularized_rows(runs_root, sorted(analytical["num_ghost_logits"].unique()), ridge_eps, batch_size)
+    frames = [analytical[keep], optimized[keep]]
+    if not ridge.empty:
+        frames.insert(1, ridge[keep])
+    return pd.concat(frames, ignore_index=True).sort_values(["source", "num_ghost_logits"])
 
 def y_limits_excluding_ghost(df: pd.DataFrame, metric: str, excluded_ghost=256, logy=False):
     values = df.loc[df["num_ghost_logits"] != excluded_ghost, metric].dropna()
@@ -167,10 +252,14 @@ def main():
         type=Path,
         default=Path("main_experiments/mnist_runs/exploration/none_shared_init/comparison"),
     )
+    parser.add_argument("--runs-root", type=Path, default=Path("main_experiments/mnist_runs/exploration"))
+    parser.add_argument("--ridge-eps", type=float, default=1e-3)
+    parser.add_argument("--eval-batch-size", type=int, default=BATCH_SIZE)
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    df = load_comparison(args.analytical_csv, args.optimized_csv)
+    df = load_comparison(args.analytical_csv, args.optimized_csv, args.runs_root, args.ridge_eps, args.eval_batch_size)
+    LABELS["analytical_ridge"] = f"analytical ridge eps={args.ridge_eps:g}"
     df.to_csv(args.out_dir / "analytical_vs_optimized_comparison.csv", index=False)
     plot_overview(df, args.out_dir / "overview_teacher_and_gt.png")
     plot_metric(df, "teacher_argmax_agreement_A", "teacher argmax agreement", args.out_dir / "teacher_argmax_agreement_A.png", ylim=(0, 1.02))
