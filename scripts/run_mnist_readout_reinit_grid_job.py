@@ -47,6 +47,14 @@ STUDENT_INITS = [
     "lower_interp_0p625",
     "lower_interp_0p875",
     "cnn_last_inherit",
+    "readout_interp_0p0",
+    "readout_interp_0p125",
+    "readout_interp_0p25",
+    "readout_interp_0p375",
+    "readout_interp_0p5",
+    "readout_interp_0p625",
+    "readout_interp_0p75",
+    "readout_interp_0p875",
 ]
 LOWER_LAYER_INTERPOLATION = {
     "lower_interp_0p125": 0.125,
@@ -57,6 +65,17 @@ LOWER_LAYER_INTERPOLATION = {
     "lower_interp_0p75": 0.75,
     "lower_interp_0p875": 0.875,
 }
+FINAL_READOUT_INTERPOLATION = {
+    "readout_interp_0p0": 0.0,
+    "readout_interp_0p125": 0.125,
+    "readout_interp_0p25": 0.25,
+    "readout_interp_0p375": 0.375,
+    "readout_interp_0p5": 0.50,
+    "readout_interp_0p625": 0.625,
+    "readout_interp_0p75": 0.75,
+    "readout_interp_0p875": 0.875,
+}
+
 TEACHER_DIR_NAMES = {"nonfrozen": "finetuning_A_readouts_nonfrozen", "frozen": "finetuning_A_readouts_frozen"}
 CONDITION_DIR_NAMES = {"nonfrozen": "logit_distilation_B_readouts_nonfrozen", "frozen": "logit_distilation_B_readouts_frozen", "projected": "latent_projection_distilation_B"}
 
@@ -184,6 +203,17 @@ def interpolate_nonfinal_layers(student, teacher_init, alpha):
     for student_layer, teacher_layer in zip(student_layers[:-1], teacher_layers[:-1]):
         student_layer.weight.lerp_(teacher_layer.weight, alpha)
         student_layer.bias.lerp_(teacher_layer.bias, alpha)
+
+
+@t.no_grad()
+def initialize_shared_nonfinal_and_interpolated_readout(student, teacher_init, alpha):
+    student_layers = multi_linear_layers(student)
+    teacher_layers = multi_linear_layers(teacher_init)
+    for student_layer, teacher_layer in zip(student_layers[:-1], teacher_layers[:-1]):
+        student_layer.weight.copy_(teacher_layer.weight)
+        student_layer.bias.copy_(teacher_layer.bias)
+    student_layers[-1].weight.lerp_(teacher_layers[-1].weight, alpha)
+    student_layers[-1].bias.lerp_(teacher_layers[-1].bias, alpha)
 
 
 def hidden_activations(model, x):
@@ -420,6 +450,7 @@ def main():
             "last_shared_init shares only the final-layer initialization; "
             "last_shared_inherit copies the trained teacher final readout; "
             "lower_interp_* shares final-layer initialization and interpolates only lower-layer initialization; "
+            "readout_interp_* shares non-final initialization and interpolates only the final readout; "
             "cnn_last_inherit uses a CNN student with a 256-dimensional latent and copies the trained teacher readout."
         ),
     )
@@ -495,6 +526,7 @@ def main():
         else:
             student = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
         lower_interpolation_alpha = LOWER_LAYER_INTERPOLATION.get(args.student_init)
+        readout_interpolation_alpha = FINAL_READOUT_INTERPOLATION.get(args.student_init)
         if args.student_init in {"last_shared_inherit", "cnn_last_inherit"}:
             copy_final_readout(student, teacher)
         elif args.student_init == "last_shared_init" or lower_interpolation_alpha is not None:
@@ -503,6 +535,12 @@ def main():
             copy_final_readout(student, teacher_init)
             if lower_interpolation_alpha is not None:
                 interpolate_nonfinal_layers(student, teacher_init, lower_interpolation_alpha)
+        elif readout_interpolation_alpha is not None:
+            t.manual_seed(teacher_init_seed)
+            teacher_init = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
+            initialize_shared_nonfinal_and_interpolated_readout(
+                student, teacher_init, readout_interpolation_alpha
+            )
         opt = t.optim.Adam(student.parameters(), lr=LR)
 
         projection_basis = projection_mask = projection_rank = None
@@ -530,6 +568,7 @@ def main():
             "student_architecture": "cnn" if args.student_init == "cnn_last_inherit" else "mlp",
             "shares_teacher_initialization_seed": args.student_init == "all_shared_init",
             "lower_layer_interpolation_alpha": float(lower_interpolation_alpha) if lower_interpolation_alpha is not None else float("nan"),
+            "final_readout_interpolation_alpha": float(readout_interpolation_alpha) if readout_interpolation_alpha is not None else float("nan"),
         }
 
         rows = []
