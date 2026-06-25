@@ -15,7 +15,7 @@ from run_mnist_readout_reinit_grid_job import MAX_GHOST_LOGITS, to_tensor
 
 TEACHER_DIR = "finetuning_A_readouts_nonfrozen"
 DATA_LABEL = "data1"
-LOGITS = [4, 32, 256]
+LOGITS = [4, 16, 64, 256, 1024]
 CHANCE_ACCURACY = 0.10
 
 SETUPS = [
@@ -187,7 +187,8 @@ def main() -> None:
     teacher_accuracy = load_teacher_accuracy(args.runs_root)
     records = collect_records(args.runs_root, teacher_accuracy)
     df = pd.DataFrame(records)
-    csv_path = args.out_dir / "figure10b_full_data_g4_g32_g256_bars.csv"
+    csv_name = "figure10b_full_data_" + "_".join(f"g{ghost_logits}" for ghost_logits in LOGITS) + "_bars.csv"
+    csv_path = args.out_dir / csv_name
     df.to_csv(csv_path, index=False)
 
     out_paths = [plot_for_logits(df, args.out_dir, ghost_logits, args.dpi) for ghost_logits in LOGITS]
