@@ -31,6 +31,7 @@ from run_mnist_readout_reinit_grid_job import (
     spectrum_for_model,
     to_tensor,
     final_readout,
+    CNNStudent,
 )
 
 
@@ -55,6 +56,7 @@ def train_teacher(model, x, y, epochs, freeze_final_readout):
 def main():
     parser = argparse.ArgumentParser(description='Prepare shared max-output teachers for readout-reinit grid.')
     parser.add_argument('--teacher-readout', choices=TEACHER_READOUTS, required=True)
+    parser.add_argument('--teacher-arch', choices=['mlp', 'cnn'], default='mlp')
     parser.add_argument('--teacher-epochs', type=int, default=EPOCHS_TEACHER)
     parser.add_argument('--spectrum-items', type=int, default=2048)
     parser.add_argument('--seed', type=int, default=SEED)
@@ -78,11 +80,15 @@ def main():
     train_x = train_x_s.unsqueeze(0).expand(N_MODELS, -1, -1, -1, -1)
     test_x = test_x_s.unsqueeze(0).expand(N_MODELS, -1, -1, -1, -1)
 
-    model = MultiClassifier(N_MODELS, [28 * 28, 256, 256, 10 + MAX_GHOST_LOGITS]).to(DEVICE)
+    if args.teacher_arch == 'cnn':
+        model = CNNStudent(N_MODELS, 10 + MAX_GHOST_LOGITS).to(DEVICE)
+    else:
+        model = MultiClassifier(N_MODELS, [28 * 28, 256, 256, 10 + MAX_GHOST_LOGITS]).to(DEVICE)
     train_teacher(model, train_x, train_y, args.teacher_epochs, args.teacher_readout == 'frozen')
 
     cfg = {
         'teacher_readout': args.teacher_readout,
+        'teacher_architecture': args.teacher_arch,
         'teacher_readout_frozen': args.teacher_readout == 'frozen',
         'max_ghost_logits': MAX_GHOST_LOGITS,
         'seed': args.seed,

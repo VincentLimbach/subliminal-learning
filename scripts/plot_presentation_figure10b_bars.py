@@ -226,7 +226,7 @@ def plot_for_logits(df: pd.DataFrame, out_dir: Path, ghost_logits: int, dpi: int
     ax.axhline(CHANCE_ACCURACY, color="black", linestyle=":", linewidth=1.8, alpha=0.9)
     ax.set_ylim(0.0, 1.02)
     ax.set_ylabel("Test accuracy")
-    ax.set_title(f"Full data, g={ghost_logits}, trainable teacher readout, 20 seeds")
+    ax.set_title(f"Full data, g={ghost_logits}, 20 seeds")
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=0, ha="center")
     ax.grid(axis="y", alpha=0.28)

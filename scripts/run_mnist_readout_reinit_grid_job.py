@@ -433,6 +433,7 @@ def main():
     parser.add_argument("--data-fraction", type=float, choices=DATA_FRACTIONS, required=True)
     parser.add_argument("--condition", choices=CONDITIONS + ["all"], default="all")
     parser.add_argument("--teacher-readout", choices=TEACHER_READOUTS, required=True)
+    parser.add_argument("--teacher-arch", choices=["mlp", "cnn"], default="mlp")
     parser.add_argument("--distill-epochs", type=int, default=100)
     parser.add_argument("--teacher-epochs", type=int, default=EPOCHS_TEACHER)
     parser.add_argument("--eval-batch-size", type=int, default=1024)
@@ -502,7 +503,10 @@ def main():
     ghost_idx = list(range(10, 10 + args.num_ghost_logits))
     layer_sizes = [28 * 28, 256, 256, 10 + MAX_GHOST_LOGITS]
 
-    teacher = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
+    if args.teacher_arch == "cnn":
+        teacher = CNNStudent(N_MODELS, layer_sizes[-1]).to(DEVICE)
+    else:
+        teacher = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
     teacher_payload = t.load(teacher_model_path, map_location=DEVICE)
     teacher.load_state_dict(teacher_payload["state_dict"])
     teacher.eval()
@@ -554,6 +558,7 @@ def main():
             "student_init": args.student_init,
             "teacher_root": str(teacher_root),
             "teacher_readout": args.teacher_readout,
+            "teacher_architecture": args.teacher_arch,
             "teacher_readout_frozen": args.teacher_readout == "frozen",
             "condition": condition,
             "num_ghost_logits": args.num_ghost_logits,
