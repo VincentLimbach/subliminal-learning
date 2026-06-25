@@ -16,8 +16,8 @@ DATA_LABEL = "data1"
 TEACHER_COLOR = "#8D6E63"
 
 SETUPS = [
-    ("../last_shared_inherit", "MLP student", "#D55E00"),
-    ("cnn_last_inherit", "CNN student", "#0072B2"),
+    ("../last_shared_init", "MLP student", "#D55E00"),
+    ("cnn_last_shared_init", "CNN student", "#0072B2"),
 ]
 
 
@@ -33,7 +33,7 @@ def read_final_accuracy(root: Path, setup: str, ghost_count: int) -> float | Non
 
 @t.inference_mode()
 def teacher_accuracy(root: Path, batch_size: int) -> float | None:
-    path = (root / "../last_shared_inherit" / TEACHER_DIR / "teacher_artifacts" / "model.pt").resolve()
+    path = (root / "../last_shared_init" / TEACHER_DIR / "teacher_artifacts" / "model.pt").resolve()
     if not path.exists():
         return None
     _, test_ds = get_mnist()

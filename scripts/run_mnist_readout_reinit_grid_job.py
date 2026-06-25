@@ -47,6 +47,7 @@ STUDENT_INITS = [
     "lower_interp_0p625",
     "lower_interp_0p875",
     "cnn_last_inherit",
+    "cnn_last_shared_init",
     "readout_interp_0p0",
     "readout_interp_0p125",
     "readout_interp_0p25",
@@ -188,6 +189,12 @@ def copy_final_readout(dst, src):
     src_layer = final_readout(src)
     dst_layer.weight.copy_(src_layer.weight)
     dst_layer.bias.copy_(src_layer.bias)
+
+
+def make_teacher_init_model(teacher_arch, n_models, layer_sizes):
+    if teacher_arch == "cnn":
+        return CNNStudent(n_models, layer_sizes[-1]).to(DEVICE)
+    return MultiClassifier(n_models, layer_sizes).to(DEVICE)
 
 
 def multi_linear_layers(model):
@@ -452,7 +459,8 @@ def main():
             "last_shared_inherit copies the trained teacher final readout; "
             "lower_interp_* shares final-layer initialization and interpolates only lower-layer initialization; "
             "readout_interp_* shares non-final initialization and interpolates only the final readout; "
-            "cnn_last_inherit uses a CNN student with a 256-dimensional latent and copies the trained teacher readout."
+            "cnn_last_inherit uses a CNN student with a 256-dimensional latent and copies the trained teacher readout; "
+            "cnn_last_shared_init uses a CNN student and copies only the teacher's initial final-layer readout."
         ),
     )
     parser.add_argument("--wandb", action="store_true", help="Log metrics and final student checkpoint to Weights & Biases.")
@@ -525,7 +533,7 @@ def main():
         teacher_init_seed = args.seed
         student_seed = args.seed if args.student_init == "all_shared_init" else args.seed + 101
         t.manual_seed(student_seed)
-        if args.student_init == "cnn_last_inherit":
+        if args.student_init in {"cnn_last_inherit", "cnn_last_shared_init"}:
             student = CNNStudent(N_MODELS, layer_sizes[-1]).to(DEVICE)
         else:
             student = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
@@ -533,9 +541,9 @@ def main():
         readout_interpolation_alpha = FINAL_READOUT_INTERPOLATION.get(args.student_init)
         if args.student_init in {"last_shared_inherit", "cnn_last_inherit"}:
             copy_final_readout(student, teacher)
-        elif args.student_init == "last_shared_init" or lower_interpolation_alpha is not None:
+        elif args.student_init in {"last_shared_init", "cnn_last_shared_init"} or lower_interpolation_alpha is not None:
             t.manual_seed(teacher_init_seed)
-            teacher_init = MultiClassifier(N_MODELS, layer_sizes).to(DEVICE)
+            teacher_init = make_teacher_init_model(args.teacher_arch, N_MODELS, layer_sizes)
             copy_final_readout(student, teacher_init)
             if lower_interpolation_alpha is not None:
                 interpolate_nonfinal_layers(student, teacher_init, lower_interpolation_alpha)
@@ -570,7 +578,7 @@ def main():
             "ghost_indices": ghost_idx,
             "seed": args.seed,
             "student_seed": student_seed,
-            "student_architecture": "cnn" if args.student_init == "cnn_last_inherit" else "mlp",
+            "student_architecture": "cnn" if args.student_init in {"cnn_last_inherit", "cnn_last_shared_init"} else "mlp",
             "shares_teacher_initialization_seed": args.student_init == "all_shared_init",
             "lower_layer_interpolation_alpha": float(lower_interpolation_alpha) if lower_interpolation_alpha is not None else float("nan"),
             "final_readout_interpolation_alpha": float(readout_interpolation_alpha) if readout_interpolation_alpha is not None else float("nan"),
