@@ -11,7 +11,7 @@ CONDITION_DIR = "logit_distilation_B_readouts_nonfrozen"
 DATA_LABEL = "data1"
 
 SETUPS = [
-    ("last_shared_init", "alpha=0.000: final init shared", "#808080"),
+    ("../last_shared_init", "alpha=0.000: final init shared", "#808080"),
     ("lower_interp_0p125", "alpha=0.125", "#0072B2"),
     ("lower_interp_0p25", "alpha=0.250", "#56B4E9"),
     ("lower_interp_0p375", "alpha=0.375", "#009E73"),
@@ -19,12 +19,12 @@ SETUPS = [
     ("lower_interp_0p625", "alpha=0.625", "#E69F00"),
     ("lower_interp_0p75", "alpha=0.750", "#D55E00"),
     ("lower_interp_0p875", "alpha=0.875", "#CC79A7"),
-    ("all_shared_init", "alpha=1.000: all init shared", "#6b4ea1"),
+    ("../all_shared_init", "alpha=1.000: all init shared", "#6b4ea1"),
 ]
 
 
 def read_final_accuracy(root: Path, setup: str, ghost_count: int) -> float | None:
-    path = root / setup / TEACHER_DIR / CONDITION_DIR / DATA_LABEL / f"logits{ghost_count}" / "metrics.csv"
+    path = (root / setup / TEACHER_DIR / CONDITION_DIR / DATA_LABEL / f"logits{ghost_count}" / "metrics.csv").resolve()
     if not path.exists():
         return None
     df = pd.read_csv(path)
@@ -35,11 +35,11 @@ def read_final_accuracy(root: Path, setup: str, ghost_count: int) -> float | Non
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=Path("main_experiments/mnist_runs/exploration"))
+    parser.add_argument("--root", type=Path, default=Path("main_experiments/mnist_runs/exploration/lower_interp"))
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("main_experiments/mnist_runs/exploration/lower_interp_sanity_plots"),
+        default=Path("main_experiments/mnist_runs/exploration/lower_interp/plots"),
     )
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)

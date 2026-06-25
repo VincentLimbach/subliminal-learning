@@ -19,12 +19,12 @@ SETUPS = [
     ("readout_interp_0p625", "alpha=0.625", "#E69F00"),
     ("readout_interp_0p75", "alpha=0.750", "#D55E00"),
     ("readout_interp_0p875", "alpha=0.875", "#CC79A7"),
-    ("all_shared_init", "alpha=1.000: all init shared", "#6b4ea1"),
+    ("../all_shared_init", "alpha=1.000: all init shared", "#6b4ea1"),
 ]
 
 
 def read_final_accuracy(root: Path, setup: str, ghost_count: int) -> float | None:
-    path = root / setup / TEACHER_DIR / CONDITION_DIR / DATA_LABEL / f"logits{ghost_count}" / "metrics.csv"
+    path = (root / setup / TEACHER_DIR / CONDITION_DIR / DATA_LABEL / f"logits{ghost_count}" / "metrics.csv").resolve()
     if not path.exists():
         return None
     df = pd.read_csv(path)
@@ -35,11 +35,11 @@ def read_final_accuracy(root: Path, setup: str, ghost_count: int) -> float | Non
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=Path("main_experiments/mnist_runs/exploration"))
+    parser.add_argument("--root", type=Path, default=Path("main_experiments/mnist_runs/exploration/readout_interp"))
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("main_experiments/mnist_runs/exploration/readout_interp_sanity_plots"),
+        default=Path("main_experiments/mnist_runs/exploration/readout_interp/plots"),
     )
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)

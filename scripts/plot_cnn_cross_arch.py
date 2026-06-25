@@ -11,13 +11,13 @@ CONDITION_DIR = "logit_distilation_B_readouts_nonfrozen"
 DATA_LABEL = "data1"
 
 SETUPS = [
-    ("last_shared_inherit", "MLP student", "#D55E00"),
+    ("../last_shared_inherit", "MLP student", "#D55E00"),
     ("cnn_last_inherit", "CNN student", "#0072B2"),
 ]
 
 
 def read_final_accuracy(root: Path, setup: str, ghost_count: int) -> float | None:
-    path = root / setup / TEACHER_DIR / CONDITION_DIR / DATA_LABEL / f"logits{ghost_count}" / "metrics.csv"
+    path = (root / setup / TEACHER_DIR / CONDITION_DIR / DATA_LABEL / f"logits{ghost_count}" / "metrics.csv").resolve()
     if not path.exists():
         return None
     df = pd.read_csv(path)
@@ -28,11 +28,11 @@ def read_final_accuracy(root: Path, setup: str, ghost_count: int) -> float | Non
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=Path("main_experiments/mnist_runs/exploration"))
+    parser.add_argument("--root", type=Path, default=Path("main_experiments/mnist_runs/exploration/cnn_cross_arch"))
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("main_experiments/mnist_runs/exploration/cnn_cross_arch_plots"),
+        default=Path("main_experiments/mnist_runs/exploration/cnn_cross_arch/plots"),
     )
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
