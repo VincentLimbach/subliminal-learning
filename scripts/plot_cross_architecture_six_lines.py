@@ -125,7 +125,7 @@ def collect_student(series: str, label: str, color: str, seed_roots: list[Path])
 def build_records(args) -> pd.DataFrame:
     test_x, test_y = load_test_data()
     mlp_teacher_paths = [
-        args.mlp_root / "last_shared_init" / f"seed{seed}" / TEACHER_DIR / "teacher_artifacts" / "model.pt"
+        args.mlp_root / "last_shared_inherit" / f"seed{seed}" / TEACHER_DIR / "teacher_artifacts" / "model.pt"
         for seed in args.seeds
     ]
     cnn_teacher_paths = [
