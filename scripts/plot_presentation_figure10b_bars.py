@@ -15,7 +15,7 @@ from run_mnist_readout_reinit_grid_job import MAX_GHOST_LOGITS, to_tensor
 
 TEACHER_DIR = "finetuning_A_readouts_nonfrozen"
 DATA_LABEL = "data1"
-LOGITS = [4, 32]
+LOGITS = [4, 32, 256]
 CHANCE_ACCURACY = 0.10
 
 SETUPS = [
@@ -179,7 +179,7 @@ def plot_for_logits(df: pd.DataFrame, out_dir: Path, ghost_logits: int, dpi: int
 def main() -> None:
     parser = argparse.ArgumentParser(description="Presentation bar charts for Figure-10b-style MNIST runs.")
     parser.add_argument("--runs-root", type=Path, default=Path("main_experiments/mnist_runs/exploration"))
-    parser.add_argument("--out-dir", type=Path, default=Path("main_experiments/mnist_runs/presentation"))
+    parser.add_argument("--out-dir", type=Path, default=Path("main_experiments/mnist_runs/presentation/plots"))
     parser.add_argument("--dpi", type=int, default=450)
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -187,7 +187,7 @@ def main() -> None:
     teacher_accuracy = load_teacher_accuracy(args.runs_root)
     records = collect_records(args.runs_root, teacher_accuracy)
     df = pd.DataFrame(records)
-    csv_path = args.out_dir / "figure10b_full_data_g4_g32_bars.csv"
+    csv_path = args.out_dir / "figure10b_full_data_g4_g32_g256_bars.csv"
     df.to_csv(csv_path, index=False)
 
     out_paths = [plot_for_logits(df, args.out_dir, ghost_logits, args.dpi) for ghost_logits in LOGITS]
