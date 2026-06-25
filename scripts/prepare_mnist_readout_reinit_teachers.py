@@ -57,6 +57,7 @@ def main():
     parser = argparse.ArgumentParser(description='Prepare shared max-output teachers for readout-reinit grid.')
     parser.add_argument('--teacher-readout', choices=TEACHER_READOUTS, required=True)
     parser.add_argument('--teacher-arch', choices=['mlp', 'cnn'], default='mlp')
+    parser.add_argument('--latent-dim', type=int, default=256, help='Final hidden/latent width before the readout for MLP teachers.')
     parser.add_argument('--teacher-epochs', type=int, default=EPOCHS_TEACHER)
     parser.add_argument('--spectrum-items', type=int, default=2048)
     parser.add_argument('--seed', type=int, default=SEED)
@@ -83,7 +84,7 @@ def main():
     if args.teacher_arch == 'cnn':
         model = CNNStudent(N_MODELS, 10 + MAX_GHOST_LOGITS).to(DEVICE)
     else:
-        model = MultiClassifier(N_MODELS, [28 * 28, 256, 256, 10 + MAX_GHOST_LOGITS]).to(DEVICE)
+        model = MultiClassifier(N_MODELS, [28 * 28, 256, args.latent_dim, 10 + MAX_GHOST_LOGITS]).to(DEVICE)
     train_teacher(model, train_x, train_y, args.teacher_epochs, args.teacher_readout == 'frozen')
 
     cfg = {
@@ -91,6 +92,7 @@ def main():
         'teacher_architecture': args.teacher_arch,
         'teacher_readout_frozen': args.teacher_readout == 'frozen',
         'max_ghost_logits': MAX_GHOST_LOGITS,
+        'latent_dim': args.latent_dim,
         'seed': args.seed,
         'teacher_epochs': args.teacher_epochs,
     }

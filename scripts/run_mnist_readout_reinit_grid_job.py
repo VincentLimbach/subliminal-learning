@@ -21,9 +21,6 @@ from run_mnist_experiment import (
     PreloadedDataLoader,
     ci_95,
     get_mnist,
-    restore_readout_rows,
-    snapshot_readout_rows,
-    zero_readout_row_grads,
 )
 
 N_MODELS = 1
@@ -181,6 +178,32 @@ def final_readout(model):
     if hasattr(model, "readout"):
         return model.readout
     return model.net[-1]
+
+
+def snapshot_readout_rows(model, idx):
+    layer = final_readout(model)
+    index = readout_indices(idx, layer.weight.device)
+    return (
+        layer.weight.index_select(1, index).detach().clone(),
+        layer.bias.index_select(1, index).detach().clone(),
+    )
+
+
+def restore_readout_rows(model, idx, weight, bias):
+    layer = final_readout(model)
+    index = readout_indices(idx, layer.weight.device)
+    with t.no_grad():
+        layer.weight.index_copy_(1, index, weight)
+        layer.bias.index_copy_(1, index, bias)
+
+
+def zero_readout_row_grads(model, idx):
+    layer = final_readout(model)
+    index = readout_indices(idx, layer.weight.device)
+    if layer.weight.grad is not None:
+        layer.weight.grad.index_fill_(1, index, 0.0)
+    if layer.bias.grad is not None:
+        layer.bias.grad.index_fill_(1, index, 0.0)
 
 
 @t.no_grad()
@@ -441,6 +464,7 @@ def main():
     parser.add_argument("--condition", choices=CONDITIONS + ["all"], default="all")
     parser.add_argument("--teacher-readout", choices=TEACHER_READOUTS, required=True)
     parser.add_argument("--teacher-arch", choices=["mlp", "cnn"], default="mlp")
+    parser.add_argument("--latent-dim", type=int, default=256, help="Final hidden/latent width before the readout for MLP models.")
     parser.add_argument("--distill-epochs", type=int, default=100)
     parser.add_argument("--teacher-epochs", type=int, default=EPOCHS_TEACHER)
     parser.add_argument("--eval-batch-size", type=int, default=1024)
@@ -509,7 +533,7 @@ def main():
     rand_imgs = t.rand((N_MODELS, n_distill, 1, 28, 28), device=DEVICE) * 2 - 1
 
     ghost_idx = list(range(10, 10 + args.num_ghost_logits))
-    layer_sizes = [28 * 28, 256, 256, 10 + MAX_GHOST_LOGITS]
+    layer_sizes = [28 * 28, 256, args.latent_dim, 10 + MAX_GHOST_LOGITS]
 
     if args.teacher_arch == "cnn":
         teacher = CNNStudent(N_MODELS, layer_sizes[-1]).to(DEVICE)
@@ -567,6 +591,7 @@ def main():
             "teacher_root": str(teacher_root),
             "teacher_readout": args.teacher_readout,
             "teacher_architecture": args.teacher_arch,
+            "latent_dim": args.latent_dim,
             "teacher_readout_frozen": args.teacher_readout == "frozen",
             "condition": condition,
             "num_ghost_logits": args.num_ghost_logits,
