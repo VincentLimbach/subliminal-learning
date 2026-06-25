@@ -17,9 +17,6 @@ from run_mnist_experiment import (
     MultiClassifier,
     PreloadedDataLoader,
     get_mnist,
-    restore_readout_rows,
-    snapshot_readout_rows,
-    zero_readout_row_grads,
 )
 N_MODELS = 1
 EXPERIMENT_N_MODELS = N_MODELS
@@ -31,6 +28,9 @@ from run_mnist_readout_reinit_grid_job import (
     spectrum_for_model,
     to_tensor,
     final_readout,
+    snapshot_readout_rows,
+    restore_readout_rows,
+    zero_readout_row_grads,
     CNNStudent,
 )
 
