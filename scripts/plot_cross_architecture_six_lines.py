@@ -15,7 +15,10 @@ sys.path.insert(0, str(SCRIPT_DIR))
 from run_mnist_experiment import DEVICE, MultiClassifier, get_mnist
 from run_mnist_readout_reinit_grid_job import CNNStudent, GHOST_COUNTS, MAX_GHOST_LOGITS, to_tensor
 
-TEACHER_DIR = "finetuning_A_readouts_nonfrozen"
+TEACHER_DIRS = {
+    "nonfrozen": "finetuning_A_readouts_nonfrozen",
+    "frozen": "finetuning_A_readouts_frozen",
+}
 CONDITION_DIRS = {
     "trainable": "logit_distilation_B_readouts_nonfrozen",
     "frozen": "logit_distilation_B_readouts_frozen",
@@ -103,12 +106,12 @@ def collect_teacher(label_key: str, label: str, color: str, architecture: str, p
     }
 
 
-def collect_student(series: str, label: str, color: str, seed_roots: list[Path], condition_dir: str) -> list[dict]:
+def collect_student(series: str, label: str, color: str, seed_roots: list[Path], teacher_dir: str, condition_dir: str) -> list[dict]:
     rows = []
     for ghost_count in GHOST_COUNTS:
         values = []
         for seed_root in seed_roots:
-            value = read_final_accuracy(seed_root / TEACHER_DIR / condition_dir / DATA_LABEL / f"logits{ghost_count}" / "metrics.csv")
+            value = read_final_accuracy(seed_root / teacher_dir / condition_dir / DATA_LABEL / f"logits{ghost_count}" / "metrics.csv")
             if value is not None:
                 values.append(value)
         mean, std, ci90, n = mean_ci90(values)
@@ -132,59 +135,49 @@ def collect_student(series: str, label: str, color: str, seed_roots: list[Path],
 def build_records(args) -> pd.DataFrame:
     test_x, test_y = load_test_data()
     condition_dir = CONDITION_DIRS[args.condition]
-    mlp_teacher_paths = [
-        args.mlp_root / "last_shared_inherit" / f"seed{seed}" / TEACHER_DIR / "teacher_artifacts" / "model.pt"
-        for seed in args.seeds
-    ]
-    cnn_teacher_paths = [
-        args.cnn_teacher_root / f"seed{seed}" / TEACHER_DIR / "teacher_artifacts" / "model.pt"
-        for seed in args.seeds
-    ]
+    teacher_dir = TEACHER_DIRS[args.teacher_readout]
+    if args.teacher_readout == "frozen":
+        mlp_teacher_paths = [
+            args.frozen_teacher_root / "teachers" / "mlp" / f"seed{seed}" / teacher_dir / "teacher_artifacts" / "model.pt"
+            for seed in args.seeds
+        ]
+        cnn_teacher_paths = [
+            args.frozen_teacher_root / "teachers" / "cnn" / f"seed{seed}" / teacher_dir / "teacher_artifacts" / "model.pt"
+            for seed in args.seeds
+        ]
+    else:
+        mlp_teacher_paths = [
+            args.mlp_root / "last_shared_inherit" / f"seed{seed}" / teacher_dir / "teacher_artifacts" / "model.pt"
+            for seed in args.seeds
+        ]
+        cnn_teacher_paths = [
+            args.cnn_teacher_root / f"seed{seed}" / teacher_dir / "teacher_artifacts" / "model.pt"
+            for seed in args.seeds
+        ]
 
     records = [
         collect_teacher("mlp_teacher", "MLP teacher", "#8C5F4A", "mlp", mlp_teacher_paths, test_x, test_y),
         collect_teacher("cnn_teacher", "CNN teacher", "#4E342E", "cnn", cnn_teacher_paths, test_x, test_y),
     ]
-    records.extend(
-        collect_student(
-            "mlp_mlp",
-            "MLP -> MLP student",
-            "#D55E00",
-            [args.mlp_root / "last_shared_init" / f"seed{seed}" for seed in args.seeds],
-            condition_dir,
-        )
-    )
-    records.extend(
-        collect_student(
-            "mlp_cnn",
-            "MLP -> CNN student",
-            "#0072B2",
-            [args.mlp_cnn_root / f"seed{seed}" / "cnn_last_shared_init" for seed in args.seeds],
-            condition_dir,
-        )
-    )
-    records.extend(
-        collect_student(
-            "cnn_mlp",
-            "CNN -> MLP student",
-            "#009E73",
-            [args.cnn_mlp_root / "mlp_last_shared_init" / f"seed{seed}" / "last_shared_init" for seed in args.seeds],
-            condition_dir,
-        )
-    )
-    records.extend(
-        collect_student(
-            "cnn_cnn",
-            "CNN -> CNN student",
-            "#CC79A7",
-            [args.cnn_cnn_root / "cnn_last_shared_init" / f"seed{seed}" / "cnn_last_shared_init" for seed in args.seeds],
-            condition_dir,
-        )
-    )
+    if args.teacher_readout == "frozen":
+        mlp_mlp_roots = [args.frozen_teacher_root / "mlp_mlp" / f"seed{seed}" / "last_shared_init" for seed in args.seeds]
+        mlp_cnn_roots = [args.frozen_teacher_root / "mlp_cnn" / f"seed{seed}" / "cnn_last_shared_init" for seed in args.seeds]
+        cnn_mlp_roots = [args.frozen_teacher_root / "cnn_mlp" / f"seed{seed}" / "last_shared_init" for seed in args.seeds]
+        cnn_cnn_roots = [args.frozen_teacher_root / "cnn_cnn" / f"seed{seed}" / "cnn_last_shared_init" for seed in args.seeds]
+    else:
+        mlp_mlp_roots = [args.mlp_root / "last_shared_init" / f"seed{seed}" for seed in args.seeds]
+        mlp_cnn_roots = [args.mlp_cnn_root / f"seed{seed}" / "cnn_last_shared_init" for seed in args.seeds]
+        cnn_mlp_roots = [args.cnn_mlp_root / "mlp_last_shared_init" / f"seed{seed}" / "last_shared_init" for seed in args.seeds]
+        cnn_cnn_roots = [args.cnn_cnn_root / "cnn_last_shared_init" / f"seed{seed}" / "cnn_last_shared_init" for seed in args.seeds]
+
+    records.extend(collect_student("mlp_mlp", "MLP -> MLP student", "#D55E00", mlp_mlp_roots, teacher_dir, condition_dir))
+    records.extend(collect_student("mlp_cnn", "MLP -> CNN student", "#0072B2", mlp_cnn_roots, teacher_dir, condition_dir))
+    records.extend(collect_student("cnn_mlp", "CNN -> MLP student", "#009E73", cnn_mlp_roots, teacher_dir, condition_dir))
+    records.extend(collect_student("cnn_cnn", "CNN -> CNN student", "#CC79A7", cnn_cnn_roots, teacher_dir, condition_dir))
     return pd.DataFrame(records)
 
 
-def plot(df: pd.DataFrame, out_path: Path, dpi: int, condition: str) -> None:
+def plot(df: pd.DataFrame, out_path: Path, dpi: int, condition: str, teacher_readout: str) -> None:
     fig, ax = plt.subplots(figsize=(13.2, 7.0))
     for series, label, color, _architecture in TEACHER_LINES:
         row = df[df["series"] == series]
@@ -213,7 +206,8 @@ def plot(df: pd.DataFrame, out_path: Path, dpi: int, condition: str) -> None:
     ax.set_xlabel("ghost logits")
     ax.set_ylabel("final test accuracy")
     ax.set_ylim(0.0, 1.02)
-    ax.set_title(f"Cross-architecture subliminal learning, shared final-layer initialization, {CONDITION_LABELS[condition]}, 5 seeds")
+    teacher_label = "frozen teacher readouts" if teacher_readout == "frozen" else "trainable teacher readouts"
+    ax.set_title(f"Cross-architecture subliminal learning, {teacher_label}, {CONDITION_LABELS[condition]}, 5 seeds")
     ax.grid(True, alpha=0.28)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=3, frameon=False)
     fig.tight_layout(rect=(0, 0.13, 1, 1))
@@ -232,8 +226,10 @@ def main() -> None:
     parser.add_argument("--cnn-teacher-root", type=Path, default=Path("main_experiments/mnist_runs/replications_5/cnn_teacher_mlp_student/teachers"))
     parser.add_argument("--cnn-mlp-root", type=Path, default=Path("main_experiments/mnist_runs/replications_5/cnn_teacher_mlp_student"))
     parser.add_argument("--cnn-cnn-root", type=Path, default=Path("main_experiments/mnist_runs/replications_5/cnn_teacher_cnn_student"))
+    parser.add_argument("--frozen-teacher-root", type=Path, default=Path("main_experiments/mnist_runs/replications_5/cross_arch_teacher_readouts_frozen"))
     parser.add_argument("--out-dir", type=Path, default=Path("main_experiments/mnist_runs/presentation/plots"))
     parser.add_argument("--condition", choices=sorted(CONDITION_DIRS), default="trainable")
+    parser.add_argument("--teacher-readout", choices=sorted(TEACHER_DIRS), default="nonfrozen")
     parser.add_argument("--seeds", type=parse_seeds, default=parse_seeds("0,1,2,3,4"))
     parser.add_argument("--dpi", type=int, default=450)
     args = parser.parse_args()
@@ -245,10 +241,12 @@ def main() -> None:
 
     df = build_records(args)
     suffix = "student_readouts_frozen" if args.condition == "frozen" else "student_readouts_trainable"
+    if args.teacher_readout == "frozen":
+        suffix = f"teacher_readouts_frozen_{suffix}"
     csv_path = args.out_dir / f"cross_architecture_six_lines_{suffix}_summary.csv"
     out_path = args.out_dir / f"cross_architecture_six_lines_{suffix}.png"
     df.to_csv(csv_path, index=False)
-    plot(df, out_path, args.dpi, args.condition)
+    plot(df, out_path, args.dpi, args.condition, args.teacher_readout)
     complete = df[(df["kind"] == "student") & (df["n"] == len(args.seeds))].shape[0]
     populated = df[(df["kind"] == "student") & (df["n"] > 0)].shape[0]
     total = 4 * len(GHOST_COUNTS)
